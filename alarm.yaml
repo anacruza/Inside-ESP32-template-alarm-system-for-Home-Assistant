@@ -1,0 +1,34 @@
+  - badges: []
+    cards:
+      - entity: alarm_control_panel.templalarma
+        states:
+          - arm_home
+          - arm_away
+        type: alarm-panel
+      - type: grid
+        cards:
+          - type: button
+            tap_action:
+              action: toggle
+            entity: switch.siren
+            icon: 'hass:alarm-light'
+          - type: button
+            tap_action:
+              action: toggle
+            entity: switch.buzzer
+            icon: 'mdi:volume-high'
+        columns: 2
+      - type: entity-filter
+        entities:
+          - binary_sensor.front_door
+          - binary_sensor.window_1
+          - binary_sensor.window_2
+          - binary_sensor.pir
+          - binary_sensor.tamper
+        state_filter:
+          - 'on'
+        card:
+          type: entities
+    icon: 'mdi:alarm-light'
+    path: alarm
+    title: Alarm
