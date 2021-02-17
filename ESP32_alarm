@@ -1,0 +1,771 @@
+wifi:
+  ssid: XXXXXXXXX
+  password: XXXXXXXXX
+  ap:
+    ssid: XXXXXXXXX
+    password: XXXXXXXXX
+
+captive_portal:
+logger:
+ota:
+
+# SUBSTITUTIONS
+substitutions:
+
+  # Alarm Code
+  alarm_code: "1234"
+  
+  # Alarm state
+  disarmed: "0"
+  armed_home: "1"
+  armed_away: "2"
+  arming: "3"
+  pending: "4"
+  triggered: "5"
+
+  # Types of sensors
+  none: "0"
+  allow_open_sensor: "1"      # Motion sensors
+  arm_on_close_sensor: "2"    # Front Doors, garage door, locks
+  immediate_sensor: "3"       # Windows, inner doors
+  allways_on_sensor: "4"      # Tamper, gas, heat, smoke, safety
+  no_sensor_failed: "-1"
+
+  # Last service called 
+  disarm: "0"
+  arm_home: "1"
+  arm_away: "2"
+  
+  # Waiting times
+  arming_time: "12s"          # User defined
+  pending_time: "12s"         # User defined
+  trigger_time: "12s"         # User defined
+  
+  # Number of sensors
+  num_sensors: "5"            # User defined
+  
+
+# GLOBAL VARUABLES
+globals:
+
+  # USER DEFINED VARIABLES
+  # IMPORTANT: Number of values inside the vectors must match with "num_sensors"
+
+  # Sensor IDs
+  # Values must match each binary_sensor definition    
+  - id: sensor_ids
+    type: esphome::binary_sensor::BinarySensor*[5]
+    restore_value: no
+    initial_value: '{front_door, window_1, window_2, pir, tamper}'
+
+  # Sensor friendly names
+  - id: sensor_names
+    type: const char*[5]
+    restore_value: no
+    initial_value: '{"Front door", "Window 1", "Window 2", "Pir", "Tamper"}'
+
+  # Sensor types
+  # 1 for Allow open sensors: Motion sensors
+  # 2 for Arm on close sensors: Front Doors, garage door, locks
+  # 3 for Immediate sensors: Windows, inner doors
+  # 4 for Allways on sensors: Tamper, gas, heat, smoke, safety
+  - id: sensor_types_vector
+    type: std::vector<int>
+    restore_value: yes
+    initial_value: "{2, 3, 3, 1, 4}"
+
+  # Disarmed sensors: 1 for Allways on sensors, 0 for all others
+  - id: disarmed_sensors
+    type: std::vector<int>
+    restore_value: no
+    initial_value: "{0, 0, 0, 0, 1}"
+
+  # Armed home sensors: 1 for watched sensors, 0 for inactive sensors
+  - id: armed_home_sensors
+    type: std::vector<int>
+    restore_value: no
+    initial_value: "{1, 1, 1, 0, 1}"
+    
+  # Armed away sensors: 1 for watched sensors, 0 for inactive sensors
+  - id: armed_away_sensors
+    type: std::vector<int>
+    restore_value: no
+    initial_value: "{1, 1, 1, 1, 1}"
+
+  # Active sensors: all values must be 0
+  - id: active_sensors_vector
+    type: std::vector<int>
+    restore_value: yes
+    initial_value: "{0, 0, 0, 0, 0}"
+
+  # Sensor states: all values must be 0 
+  - id: sensor_states_vector
+    type: std::vector<int>
+    restore_value: no
+    initial_value: "{0, 0, 0, 0, 0}"
+
+  # Check sensor: all values must be 0
+  - id: check_sensor_vector
+    type: std::vector<int>
+    restore_value: no
+    initial_value: "{0, 0, 0, 0, 0}"
+    
+  # Bypassed sensors vector: all values must be 1
+  - id: bypassed_sensors_vector
+    type: std::vector<int>
+    restore_value: no
+    initial_value: "{1, 1, 1, 1, 1}" 
+
+  # ALARM SYSTEM INTERNAL VARIABLES
+  # Do not change
+
+  - id: alarm_state_int
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  - id: last_service_called
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  - id: detected_sensor_type
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: detected_sensor
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  - id: leaving_status
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: states_vector
+    type: const char*[6]
+    restore_value: no
+    initial_value: '{"disarmed", "armed_home", "armed_away", "arming", "pending", "triggered"}'
+    
+  - id: services_vector
+    type: const char*[3]
+    restore_value: no
+    initial_value: '{"disarm", "arm_home", "arm_away"}'
+
+
+# ALARM SENSORS
+# Add your sensors matching all the previous configuration
+
+binary_sensor:
+
+  - platform: gpio
+    device_class: door
+    name: "Front Door"
+    id: front_door
+    pin: 
+      number: GPIO5
+      mode: INPUT_PULLUP
+      inverted: True
+
+  - platform: gpio
+    device_class: window
+    name: "Window 1"
+    id: window_1
+    pin: 
+      number: GPIO18
+      mode: INPUT_PULLUP
+      inverted: True
+
+  - platform: gpio
+    device_class: window
+    name: "Window 2"
+    id: window_2
+    pin: 
+      number: GPIO19
+      mode: INPUT_PULLUP
+      inverted: True
+
+  - platform: gpio
+    device_class: motion
+    name: "PIR"
+    id: pir
+    pin: 
+      number: GPIO21
+      mode: INPUT_PULLUP
+      inverted: True
+
+  - platform: gpio
+    device_class: safety
+    name: "Tamper"
+    id: tamper
+    pin: 
+      number: GPIO23
+      mode: INPUT_PULLUP
+      inverted: True
+        
+# SIREN AND BUZZER
+switch:
+
+  - platform: gpio
+    name: "Buzzer"
+    id: buzzer
+    pin: GPIO12
+    
+  - platform: gpio
+    name: "Siren"
+    id: siren
+    pin: GPIO13   
+
+
+# SLAVE SENSORS FOR PUBLISHING
+text_sensor:
+
+  # Template alarm state for Home Assistant
+  - platform: template
+    name: "Alarm Condition"
+    id: "alarm_condition"
+    
+  # Last service monitor for Home Assistant  
+  - platform: template
+    name: "Alarm Service"
+    id: "alarm_service"
+    
+  # Last detected sensor
+  - platform: template
+    name: "Last detected sensor"
+    id: last_detected_sensor
+    
+
+# HOME ASSISTANT SERVICES   
+# TO DO: Check sensors before allow arming
+api:
+  services:
+
+    # DISARM SERVICE
+    - service: disarm
+      variables:
+        code: string
+      then: 
+        - if:
+            condition:
+              lambda: "return code == \"${alarm_code}\";"
+            then:
+              - lambda: !lambda |-
+                  std::copy(std::begin(id(disarmed_sensors)), 
+                            std::end(id(disarmed_sensors)), 
+                            std::begin(id(active_sensors_vector)));  
+                  std::fill(std::begin(id(bypassed_sensors_vector)), 
+                            std::end(id(bypassed_sensors_vector)), 1);
+              - switch.turn_off: siren
+              - switch.turn_off: buzzer
+              - script.execute: disarm_sequence
+
+                  
+    # ARM_HOME SERVICE
+    - service: arm_home
+      variables:
+        code: string
+      then: 
+        - if:
+            condition:
+              lambda: "return code == \"${alarm_code}\";"
+            then:
+              - lambda: !lambda |-
+                  id(last_service_called) = ${arm_home};
+                  std::copy(std::begin(id(armed_home_sensors)), 
+                            std::end(id(armed_home_sensors)), 
+                            std::begin(id(active_sensors_vector)));
+                  std::fill(std::begin(id(bypassed_sensors_vector)), 
+                            std::end(id(bypassed_sensors_vector)), 1);
+              - script.execute: check_sensor_status
+              - if:
+                  condition:
+                    - lambda: 'return id(detected_sensor_type) != ${none};'
+                  then:
+                    - lambda: !lambda |-
+                        std::copy(std::begin(id(disarmed_sensors)), 
+                                  std::end(id(disarmed_sensors)), 
+                                  std::begin(id(active_sensors_vector)));
+                    - script.execute: failed_to_arm
+                  else:
+                    script.execute: arm_home_sequence
+
+                 
+    # ARM_AWAY SERVICE
+    - service: arm_away
+      variables:
+        code: string
+      then: 
+        - if:
+            condition:
+              lambda: "return code == \"${alarm_code}\";"
+            then:
+              - lambda: !lambda |-
+                  id(last_service_called) = ${arm_away};
+                  std::copy(std::begin(id(armed_away_sensors)), 
+                            std::end(id(armed_away_sensors)), 
+                            std::begin(id(active_sensors_vector)));
+                  std::fill(std::begin(id(bypassed_sensors_vector)), 
+                            std::end(id(bypassed_sensors_vector)), 1);
+              - script.execute: check_sensor_status
+              - if:
+                  condition:
+                    and:
+                      - lambda: 'return id(detected_sensor_type) != ${none};'
+                      - lambda: 'return id(detected_sensor_type) != ${allow_open_sensor};'
+                  then:
+                    - lambda: !lambda |-
+                        std::copy(std::begin(id(disarmed_sensors)), 
+                                  std::end(id(disarmed_sensors)), 
+                                  std::begin(id(active_sensors_vector)));                            
+                    - script.execute: failed_to_arm
+                  else:
+                    script.execute: arming_sequence
+
+
+    # FORCE_ARM SERVICE
+    - service: force_arm
+      then:
+        - homeassistant.service:
+            service: browser_mod.close_popup
+        - if: 
+            condition:
+              lambda: 'return id(last_service_called) == ${arm_home};'
+            then:
+              - lambda: !lambda |-
+                  std::copy(std::begin(id(armed_home_sensors)), 
+                            std::end(id(armed_home_sensors)), 
+                            std::begin(id(active_sensors_vector)));
+        - if: 
+            condition:
+              lambda: 'return id(last_service_called) == ${arm_away};'
+            then:
+              - lambda: !lambda |-
+                  std::copy(std::begin(id(armed_away_sensors)), 
+                            std::end(id(armed_away_sensors)), 
+                            std::begin(id(active_sensors_vector)));       
+        - script.execute: force_arm_sequence
+
+
+# ESPHOME
+esphome:
+  name: pruebalarma
+  platform: ESP32
+  board: esp-wrover-kit
+
+
+# BOOT 
+  on_boot:
+    then:
+    
+      # RESTORE ALARM STATE
+      - script.execute: restore_alarm_state
+
+
+# LOOP  
+  on_loop:
+    then:
+
+      - script.wait: publish_states
+      - script.wait: restore_alarm_state
+      - script.wait: failed_to_arm
+      - script.wait: check_sensor_status
+      - script.wait: evaluate_sensor_status
+      - script.wait: disarm_sequence
+      - script.wait: arm_home_sequence
+      - script.wait: arming_sequence
+      - script.wait: arm_away_sequence
+      - script.wait: pending_sequence                
+      - script.wait: trigger_alarm 
+      - script.wait: force_arm_sequence
+      
+
+      # Check and evaluate
+      - if:
+          condition:
+            - lambda: 'return (id(alarm_state_int) != ${triggered});'
+          then: 
+            - script.execute: check_sensor_status
+            - script.execute: evaluate_sensor_status
+      
+
+
+# SCRIPTS
+script:
+
+  # RESTORE ALARM STATE AND ACTIVE SENSOR VECTOR AFTER BOOT
+  - id: restore_alarm_state
+    then:
+      
+      # Restore last detected sensor
+      - lambda: !lambda |-
+          if (id(detected_sensor) != ${no_sensor_failed}) 
+              id(last_detected_sensor).publish_state(id(sensor_names)[id(detected_sensor)]);
+      # Disarmed stays equal
+      - if: 
+          condition:
+            lambda: 'return id(alarm_state_int) == ${disarmed};'
+          then:
+            - lambda: !lambda |-          
+                std::copy(std::begin(id(disarmed_sensors)), 
+                          std::end(id(disarmed_sensors)), 
+                          std::begin(id(active_sensors_vector)));
+            - script.execute: disarm_sequence
+      
+      # Armed home stays equal
+      - if: 
+          condition:
+            lambda: 'return id(alarm_state_int) == ${armed_home};'
+          then:
+            - lambda: !lambda |-
+                std::copy(std::begin(id(armed_home_sensors)), 
+                          std::end(id(armed_home_sensors)), 
+                          std::begin(id(active_sensors_vector)));             
+            - script.execute: arm_home_sequence      
+      
+      # Armed away, arming or pending goes to armed away
+      - if: 
+          condition:
+            or:
+              - lambda: 'return id(alarm_state_int) == ${armed_away};'
+              - lambda: 'return id(alarm_state_int) == ${arming};'
+              - lambda: 'return id(alarm_state_int) == ${pending};'
+          
+          then:
+            - lambda: !lambda |-
+                std::copy(std::begin(id(armed_away_sensors)), 
+                          std::end(id(armed_away_sensors)), 
+                          std::begin(id(active_sensors_vector))); 
+            - script.execute: arming_sequence  
+      
+      # Triggered goes to last service called state
+      - if: 
+          condition:
+            and:
+              - lambda: 'return id(alarm_state_int) == ${triggered};'
+              - lambda: 'return id(last_service_called) == ${arm_home};'
+          then:
+            - script.execute: arm_home_sequence
+      - if: 
+          condition:
+            and:
+              - lambda: 'return id(alarm_state_int) == ${triggered};'
+              - lambda: 'return id(last_service_called) == ${arm_away};'
+          then:
+            # arming_sequence?
+            - script.execute: arm_away_sequence
+
+
+ # FAILED TO ARM
+  - id: failed_to_arm
+    then:
+      - logger.log: "Failed to arm"
+      - lambda: !lambda |-
+          id(last_detected_sensor).publish_state(id(sensor_names)[id(detected_sensor)]);
+      # Home Assistant script to force arm using browser_mod popup 
+      - homeassistant.service:
+          service: script.force_arm_confirmation
+
+#     # As an alternative, persistent notification in Home Assistant
+
+#      - homeassistant.service:
+#          service: notify.persistent_notification
+#          data:
+#            title: "Failed to arm"
+#          data_template:  
+#            message: Please close {{ failed_sensor }}
+#          variables:
+#            failed_sensor: |-
+#              return id(sensor_names)[id(detected_sensor)];
+    
+      # Sound buzzer warning 3 times
+      - switch.turn_on: buzzer
+      - delay: 500ms
+      - switch.turn_off: buzzer
+      - delay: 500ms
+      - switch.turn_on: buzzer
+      - delay: 500ms
+      - switch.turn_off: buzzer
+      - delay: 500ms      
+      - switch.turn_on: buzzer
+      - delay: 500ms
+      - switch.turn_off: buzzer
+
+
+  # PUBLISH STATES
+  - id: publish_states
+    then:
+      - lambda: !lambda |-
+          id(alarm_condition).publish_state(id(states_vector)[id(alarm_state_int)]);
+          id(alarm_service).publish_state(id(services_vector)[id(last_service_called)]);
+                                    
+          ESP_LOGD("main", "Active Sensors Vector");
+          for (int i=0; i<${num_sensors}; i++)
+            ESP_LOGD("main", "  %d  %s", id(active_sensors_vector)[i], id(sensor_names)[i]);
+            
+          ESP_LOGD("main", "Bypassed Sensors");
+          if (std::find(id(bypassed_sensors_vector).begin(), 
+                        id(bypassed_sensors_vector).end(), 0) != 
+                        id(bypassed_sensors_vector).end()) {
+            for (int i=0; i<${num_sensors}; i++)
+              if (id(bypassed_sensors_vector)[i] == 0)
+                ESP_LOGD("main", " [X] %s", id(sensor_names)[i]);    
+          } else
+              ESP_LOGD("main", "     none");
+          
+  # CHECK SENSOR STATUS
+  # Checks all sensors and returns highest priority sensor type detected
+  # Trigger order: Immediate -> Arm on close -> Allow open 
+  - id: check_sensor_status
+    then:
+      - lambda: !lambda |-
+          // Variable apparently needs to be duplicated from global in order to work
+          esphome::binary_sensor::BinarySensor* sensor_copy[${num_sensors}] = {};
+          
+          std::copy(std::begin(id(sensor_ids)), 
+                    std::end(id(sensor_ids)), 
+                    std::begin(sensor_copy));
+          for (int i=0; i<${num_sensors}; i++) {
+            if (id(&sensor_copy[i])->state) {
+              id(sensor_states_vector)[i]=1;
+            } else {  
+              id(sensor_states_vector)[i]=0;
+            }
+            id(check_sensor_vector)[i] = id(active_sensors_vector)[i] *
+                                         id(sensor_types_vector)[i] *
+                                         id(bypassed_sensors_vector)[i] *
+                                         id(sensor_states_vector)[i];
+          }
+          
+          // Max element 
+          id(detected_sensor_type) = *std::max_element(id(check_sensor_vector).begin(), 
+                                                       id(check_sensor_vector).end());
+          // Index 
+          if (id(detected_sensor_type) != ${none}) 
+            id(detected_sensor) = std::max_element(id(check_sensor_vector).begin(),
+                                                   id(check_sensor_vector).end()) - 
+                                                   id(check_sensor_vector).begin();
+          else id(detected_sensor) = ${no_sensor_failed};
+  # EVALUATE SENSOR STATUS
+  - id: evaluate_sensor_status
+    then:
+    
+      # When leaving
+      - if:
+          condition:
+            - lambda: 'return id(alarm_state_int) == ${arming};'
+          then:
+            
+            # Before going out of the house
+            - if:
+                condition:
+                  and:
+                    - lambda: !lambda |- 
+                        return (id(detected_sensor_type) == ${arm_on_close_sensor} || 
+                                id(detected_sensor_type) == ${allow_open_sensor});
+                    - not: 
+                        for:
+                          time: ${arming_time}
+                          condition:
+                            - lambda: 'return id(alarm_state_int) == ${arming};'
+                then:
+                  - lambda: 'id(leaving_status) = 1;'
+                  - script.stop: evaluate_sensor_status
+            
+            # Arming away after going out of the house
+            - if:
+                condition:
+                  lambda: 'return id(detected_sensor_type) == ${none};'
+                then:
+                  - if:
+                      condition: 
+                        or:
+                          - lambda: 'return id(leaving_status) == 1;'
+                          - for:
+                              time: ${arming_time}
+                              condition:
+                                - lambda: 'return id(alarm_state_int) == ${arming};' 
+                      then:
+                        - lambda: 'id(leaving_status) = 0;'
+                        - script.execute: arm_away_sequence
+                        - script.stop: evaluate_sensor_status 
+
+      # When arriving
+      - if:
+          condition:
+            - lambda: !lambda |-
+                  return (id(alarm_state_int) == ${armed_away} &&
+                          id(detected_sensor_type) == ${arm_on_close_sensor});
+          then: 
+            - script.execute: pending_sequence
+            - script.stop: evaluate_sensor_status 
+
+      # Waiting for disarm on arrival
+      - if:
+          condition:
+            and:
+              - lambda: !lambda |-
+                  return (id(alarm_state_int) == ${pending} &&
+                         (id(detected_sensor_type) == ${arm_on_close_sensor} ||
+                          id(detected_sensor_type) == ${allow_open_sensor}));
+              - not: 
+                  for:
+                    time: ${pending_time}
+                    condition:
+                      - lambda: 'return id(alarm_state_int) == ${pending};'
+          then: 
+            - script.stop: evaluate_sensor_status    
+
+      # When allways on sensor is detected in disarmed state
+      - if: 
+          condition:
+            and:
+              - lambda: 'return id(alarm_state_int) == ${disarmed};' 
+              - lambda: 'return id(detected_sensor_type) == ${allways_on_sensor};'  
+          then:
+            # TO DO: Push notification. Option stop buzzer
+            - switch.turn_on: buzzer
+            - lambda: 'id(bypassed_sensors_vector)[id(detected_sensor)] = 0;'
+            - script.execute: publish_states
+            - script.stop: evaluate_sensor_status
+      
+      
+      # Any other combination triggers alarm
+      - if: 
+          condition: 
+            and:
+              - lambda: 'return id(alarm_state_int) != ${triggered};' 
+              - lambda: 'return id(detected_sensor_type) != ${none};'
+          then:
+            - script.execute: trigger_alarm
+            - script.stop: evaluate_sensor_status 
+
+
+  # DISARM SEQUENCE
+  - id: disarm_sequence
+    then:
+      - lambda: !lambda |-
+          id(alarm_state_int) = ${disarmed};
+          id(last_service_called) = ${disarm};
+      - script.stop: trigger_alarm
+      - script.stop: evaluate_sensor_status
+      - script.execute: publish_states
+      - logger.log: "DISARMED"
+
+
+  # ARM_HOME SEQUENCE
+  - id: arm_home_sequence
+    then:
+      - lambda: !lambda |-
+          id(alarm_state_int) = ${armed_home};
+          id(last_service_called) = ${arm_home};
+      - switch.turn_off: buzzer
+      - script.execute: publish_states
+      - logger.log: "ARMED HOME"
+
+
+  # ARMING SEQUENCE FOR ARM_AWAY
+  - id: arming_sequence
+    then:
+      - lambda: !lambda |-
+          id(alarm_state_int) = ${arming};
+          id(last_service_called) = ${arm_away};
+      - switch.turn_on: buzzer
+      - script.execute: publish_states
+      - logger.log: "ARMING"
+
+
+  # ARM_AWAY SEQUENCE
+  - id: arm_away_sequence
+    then:
+      - lambda: !lambda |-
+          id(alarm_state_int) = ${armed_away};
+      - switch.turn_off: buzzer
+      - script.execute: publish_states
+      - logger.log: "ARMED AWAY"
+
+  # PENDING SEQUENCE
+  - id: pending_sequence
+    then:
+      - lambda: !lambda |-
+          id(alarm_state_int) = ${pending};
+      - switch.turn_on: buzzer
+      - script.execute: publish_states
+      - logger.log: "PENDING"
+
+  
+  # TRIGGER ALARM SEQUENCE
+  - id: trigger_alarm
+    then:
+      - lambda: !lambda |-
+          id(alarm_state_int) = ${triggered};
+      - script.execute: publish_states
+      - lambda: !lambda |-
+          id(last_detected_sensor).publish_state(id(sensor_names)[id(detected_sensor)]);
+      - logger.log: "ALARM TRIGGERED"
+  
+      # Turn on siren and buzzer
+      - switch.turn_on: siren
+      - switch.turn_on: buzzer
+      
+      # TO DO: Push notification to phones
+      
+      - delay: ${trigger_time} 
+      - if: 
+          condition:
+            lambda: 'return id(alarm_state_int) != ${disarmed};'
+          then:
+            - switch.turn_off: siren
+            - switch.turn_off: buzzer
+            - script.execute: force_arm_sequence
+
+
+  # FORCE ARM / RECOVERY SEQUENCE
+  # Arms again excluding any open door or window
+  # This addition helps to prevent immediate retriggering
+  - id: force_arm_sequence
+    then:
+      - logger.log: "FORCING ARM BYPASSING OPEN SENSORS" 
+      - script.execute: check_sensor_status
+      
+      # Publish last detected sensor and update bypassed sensors vector
+      
+      - lambda: !lambda |-
+          
+          //TO DO: Publish all detected sensors including opening time data
+          //if (id(detected_sensor) != ${no_sensor_failed}) {
+          //    id(last_detected_sensor).publish_state(id(sensor_names)[id(detected_sensor)]);
+              
+          // All current detected sensors are bypassed. If any previously 
+          // bypassed sensor is closed it won't be bypassed anymore.
+          
+          for (int i=0; i<${num_sensors}; i++) {
+            if (id(check_sensor_vector)[i] != ${none} &&
+                id(check_sensor_vector)[i] != ${allow_open_sensor}) {
+                 
+                id(bypassed_sensors_vector)[i] = 0;
+                
+            } else if (id(bypassed_sensors_vector)[i] == 0 &&
+                       id(sensor_states_vector)[i] == 0) {
+                       
+                id(bypassed_sensors_vector)[i] = 1;
+            }
+          }
+          
+          ESP_LOGD("main", "Last detected sensors");
+          for (int i=0; i<${num_sensors}; i++)
+            if (id(check_sensor_vector)[i] != ${none})
+              ESP_LOGD("main", "     %s", id(sensor_names)[i]);
+      # Arming to last service called
+      - if:
+          condition:
+            lambda: 'return id(last_service_called) == ${arm_home};'
+          then:
+            - script.execute: arm_home_sequence
+      - if:
+          condition:
+            lambda: 'return id(last_service_called) == ${arm_away};'
+          then:
+            - script.execute: arming_sequence  
