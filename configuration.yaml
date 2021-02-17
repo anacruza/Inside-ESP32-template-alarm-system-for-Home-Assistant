@@ -1,0 +1,25 @@
+alarm_control_panel:
+
+  - platform: template
+    panels: 
+      templalarma:
+        name: Templalarma
+        value_template: "{{ states('sensor.alarm_condition') }}"
+        arm_home:
+          - condition: template
+            value_template: "{{ code == '1234' }}"
+          - service: esphome.pruebalarma_arm_home    
+            data:
+              code: 1234
+        arm_away:
+          - condition: template
+            value_template: "{{ code == '1234' }}"
+          - service: esphome.pruebalarma_arm_away    
+            data:
+              code: 1234
+        disarm:
+          - condition: template
+            value_template: "{{ code == '1234' }}"
+          - service: esphome.pruebalarma_disarm      
+            data:
+              code: 1234
