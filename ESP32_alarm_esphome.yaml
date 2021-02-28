@@ -548,10 +548,12 @@ script:
                                                    id(check_sensor_vector).end()) - 
                                                    id(check_sensor_vector).begin();
           else id(detected_sensor) = ${no_sensor_failed};
+  
+  
   # EVALUATE SENSOR STATUS
   - id: evaluate_sensor_status
     then:
-    
+
       # When leaving
       - if:
           condition:
@@ -572,7 +574,7 @@ script:
                             - lambda: 'return id(alarm_state_int) == ${arming};'
                 then:
                   - lambda: 'id(leaving_status) = 1;'
-                  - script.stop: evaluate_sensor_status
+                  #- script.stop: evaluate_sensor_status
             
             # Arming away after going out of the house
             - if:
@@ -590,7 +592,24 @@ script:
                       then:
                         - lambda: 'id(leaving_status) = 0;'
                         - script.execute: arm_away_sequence
-                        - script.stop: evaluate_sensor_status 
+                        #- script.stop: evaluate_sensor_status 
+                        
+            # Front door kept open after arming time
+            - if:
+                condition:
+                  and:
+                    - lambda: !lambda |-
+                        return ((id(detected_sensor_type) == ${arm_on_close_sensor} || 
+                                 id(detected_sensor_type) == ${allow_open_sensor}) &&
+                                 id(leaving_status) == 1);
+                    - for:
+                        time: ${arming_time}
+                        condition:
+                          - lambda: 'return id(alarm_state_int) == ${arming};' 
+                then:            
+                  - lambda: 'id(leaving_status) = 0;'
+                  - script.execute: trigger_alarm
+                  #- script.stop: evaluate_sensor_status 
 
       # When arriving
       - if:
@@ -600,23 +619,18 @@ script:
                           id(detected_sensor_type) == ${arm_on_close_sensor});
           then: 
             - script.execute: pending_sequence
-            - script.stop: evaluate_sensor_status 
+            #- script.stop: evaluate_sensor_status 
 
-      # Waiting for disarm on arrival
+      # Pending time exceeded
       - if:
           condition:
-            and:
-              - lambda: !lambda |-
-                  return (id(alarm_state_int) == ${pending} &&
-                         (id(detected_sensor_type) == ${arm_on_close_sensor} ||
-                          id(detected_sensor_type) == ${allow_open_sensor}));
-              - not: 
-                  for:
-                    time: ${pending_time}
-                    condition:
-                      - lambda: 'return id(alarm_state_int) == ${pending};'
+            - for:
+                time: ${pending_time}
+                condition:
+                  - lambda: 'return id(alarm_state_int) == ${pending};'
           then: 
-            - script.stop: evaluate_sensor_status    
+            - script.execute: trigger_alarm
+            #- script.stop: evaluate_sensor_status
 
       # When allways on sensor is detected in disarmed state
       - if: 
@@ -626,18 +640,33 @@ script:
               - lambda: 'return id(detected_sensor_type) == ${allways_on_sensor};'  
           then:
             # TO DO: Push notification. Option stop buzzer
-            - switch.turn_on: buzzer
-            - lambda: 'id(bypassed_sensors_vector)[id(detected_sensor)] = 0;'
+            - switch.turn_on: chicharra
+            - lambda: !lambda |-
+                id(bypassed_sensors_vector)[id(detected_sensor)] = 0;
             - script.execute: publish_states
-            - script.stop: evaluate_sensor_status
+            #- script.stop: evaluate_sensor_status
       
       
       # Any other combination triggers alarm
       - if: 
           condition: 
-            and:
-              - lambda: 'return id(alarm_state_int) != ${triggered};' 
-              - lambda: 'return id(detected_sensor_type) != ${none};'
+            lambda: !lambda |-
+              if (id(detected_sensor_type) != ${none} &&
+              
+                  (id(alarm_state_int) == ${armed_home} || 
+                   
+                  (id(alarm_state_int) == ${armed_away} && 
+                   id(detected_sensor_type) != ${arm_on_close_sensor}) ||
+                  
+                  ((id(alarm_state_int) == ${arming} || 
+                    id(alarm_state_int) == ${pending}) && 
+                   (id(detected_sensor_type) == ${immediate_sensor} || 
+                    id(detected_sensor_type) == ${allways_on_sensor} )))) 
+                  
+                      return true;
+              else 
+                      return false;
+
           then:
             - script.execute: trigger_alarm
             - script.stop: evaluate_sensor_status 
@@ -685,6 +714,7 @@ script:
       - switch.turn_off: buzzer
       - script.execute: publish_states
       - logger.log: "ARMED AWAY"
+
 
   # PENDING SEQUENCE
   - id: pending_sequence
@@ -758,6 +788,7 @@ script:
           for (int i=0; i<${num_sensors}; i++)
             if (id(check_sensor_vector)[i] != ${none})
               ESP_LOGD("main", "     %s", id(sensor_names)[i]);
+              
       # Arming to last service called
       - if:
           condition:
